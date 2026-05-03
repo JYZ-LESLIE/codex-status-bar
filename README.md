@@ -23,6 +23,10 @@ This project focuses on that narrower problem:
 - 自动隐藏 `screen_recording` / `Memory summary` 这类后台摘要
 - 会话行可直接点击打开对应 Codex 线程
 - 点击任务卡片后会标记为已读并从看板隐藏，等同一线程有新事件时再出现
+- 直接打开 Codex 处理别的端口/窗口时，已完成卡片会自动标记已读，不必回到状态栏再点一次
+- 同一线程继续输入或继续跑工具时，会自动清掉旧的“完成/需要反馈”提醒
+- 新线程启动和空停不会再被标成“已完成”；只有有实际输入或工具活动的阶段收口才提醒
+- 已完成卡片会自然过期，运行中项目不受影响
 - 颜色说明收在二级菜单里，不占主任务列表空间
 - 写代码、跑工具、收到指令时不弹窗，只在菜单里更新
 - 完成、需要反馈时才发明显提醒
@@ -57,6 +61,9 @@ This project focuses on that narrower problem:
 - 为事件增加 `kind / phase / requires_user / priority` 状态字段
 - 为事件增加 `task_type / task_label / task_color / status_color` 任务分诊字段
 - 为事件增加 `display_title / display_subtitle / is_internal` 展示字段
+- 为会话增加 `show_in_board / had_user_prompt / had_tool_activity` 收口判断字段
+- 收窄完成提醒：新线程或无实际活动的 Stop 事件不再进入看板
+- 自动已读：Codex 被直接打开时清理已完成卡片，同线程继续处理时清理旧提醒
 - 避免扫描 `~/.codex/sessions/**/rollout-*.jsonl`
 - 增加本地 JSONL 事件日志
 - 大工具输出只记录长度，不把完整响应塞进事件日志
@@ -83,7 +90,7 @@ Runtime files:
 
 - `~/Library/Application Support/CodexStatusBar/latest.json`: latest event.
 - `~/Library/Application Support/CodexStatusBar/sessions.json`: latest state for recent Codex sessions.
-- `~/Library/Application Support/CodexStatusBar/dismissed.json`: clicked session-event cards hidden from the board.
+- `~/Library/Application Support/CodexStatusBar/dismissed.json`: clicked or auto-read session-event cards hidden from the board.
 - `~/Library/Application Support/CodexStatusBar/events.jsonl`: append-only event log.
 
 ## License

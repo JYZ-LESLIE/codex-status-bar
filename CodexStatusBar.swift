@@ -20,6 +20,7 @@ private struct CodexStatusEvent: Decodable {
     let displayTitle: String?
     let displaySubtitle: String?
     let isInternal: Bool?
+    let showInBoard: Bool?
     let sessionID: String?
     let transcriptPath: String?
     let workspace: String?
@@ -46,6 +47,7 @@ private struct CodexStatusEvent: Decodable {
         case displayTitle = "display_title"
         case displaySubtitle = "display_subtitle"
         case isInternal = "is_internal"
+        case showInBoard = "show_in_board"
         case sessionID = "session_id"
         case transcriptPath = "transcript_path"
         case workspace
@@ -74,6 +76,9 @@ private struct CodexSessionSummary: Decodable {
     let displayTitle: String?
     let displaySubtitle: String?
     let isInternal: Bool?
+    let showInBoard: Bool?
+    let hadUserPrompt: Bool?
+    let hadToolActivity: Bool?
     let sessionID: String?
     let transcriptPath: String?
     let workspace: String?
@@ -100,6 +105,9 @@ private struct CodexSessionSummary: Decodable {
         case displayTitle = "display_title"
         case displaySubtitle = "display_subtitle"
         case isInternal = "is_internal"
+        case showInBoard = "show_in_board"
+        case hadUserPrompt = "had_user_prompt"
+        case hadToolActivity = "had_tool_activity"
         case sessionID = "session_id"
         case transcriptPath = "transcript_path"
         case workspace
@@ -404,6 +412,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     private let dismissedURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/CodexStatusBar/dismissed.json")
     private let island = IslandWindowController()
+    private let completionCardTTL: TimeInterval = 2 * 60 * 60
 
     private var timer: Timer?
     private var latestEventID: String?
@@ -418,6 +427,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
         configureMenu(event: nil, sessions: [])
         refresh()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(activeApplicationChanged(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
@@ -595,8 +610,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             return
         }
         let sessions = loadSessions()
+        let displayEvent = event.showInBoard == false ? nil : event
 
-        configureMenu(event: event, sessions: sessions)
+        configureMenu(event: displayEvent, sessions: sessions)
         if latestEventID != event.eventID {
             let isLiveAfterLaunch = event.timestamp >= launchTime - 2
             let shouldNotify = (hasLoadedInitialEvent || isLiveAfterLaunch) && shouldNotify(for: event)
@@ -629,7 +645,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         }
         let dismissed = loadDismissedKeys()
         return sessions.values.filter {
-            !isInternalSession($0) && !dismissed.contains(dismissKey(for: $0) ?? "")
+            ($0.showInBoard ?? true) != false
+                && !isInternalSession($0)
+                && !isExpiredCompletion($0)
+                && !isLegacyStopOnlyCompletion($0)
+                && !dismissed.contains(dismissKey(for: $0) ?? "")
         }.sorted {
             let leftPriority = $0.priority ?? priorityFallback(for: $0)
             let rightPriority = $1.priority ?? priorityFallback(for: $1)
@@ -651,6 +671,29 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         return "\(sessionID)|\(timestamp)"
     }
 
+    private func isExpiredCompletion(_ session: CodexSessionSummary) -> Bool {
+        guard StatusLevel(session: session) == .done,
+              let timestamp = session.timestamp else {
+            return false
+        }
+        return Date().timeIntervalSince1970 - timestamp > completionCardTTL
+    }
+
+    private func isLegacyStopOnlyCompletion(_ session: CodexSessionSummary) -> Bool {
+        guard session.showInBoard == nil,
+              session.hadUserPrompt == nil,
+              session.hadToolActivity == nil,
+              session.hookEventName == "Stop" else {
+            return false
+        }
+        let rawTitle = (session.displayTitle ?? session.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawText = (session.displaySubtitle ?? session.body ?? session.progress ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return rawTitle.hasPrefix("{")
+            || rawTitle.hasPrefix("[")
+            || rawText == "线程已启动"
+            || rawText == "本轮已完成"
+    }
+
     private func loadDismissedKeys() -> Set<String> {
         guard let data = try? Data(contentsOf: dismissedURL),
               let dismissed = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else {
@@ -663,12 +706,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         guard let key, !key.isEmpty else {
             return
         }
+        recordDismissed([key])
+    }
+
+    private func recordDismissed(_ keys: [String]) {
+        let validKeys = keys.filter { !$0.isEmpty }
+        guard !validKeys.isEmpty else {
+            return
+        }
         var dismissed: [String: TimeInterval] = [:]
         if let data = try? Data(contentsOf: dismissedURL),
            let existing = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
             dismissed = existing
         }
-        dismissed[key] = Date().timeIntervalSince1970
+        let now = Date().timeIntervalSince1970
+        for key in validKeys {
+            dismissed[key] = now
+        }
         let recent = dismissed.sorted { $0.value > $1.value }.prefix(300)
         let pruned = Dictionary(uniqueKeysWithValues: recent.map { ($0.key, $0.value) })
         do {
@@ -681,6 +735,40 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         } catch {
             return
         }
+    }
+
+    @objc private func activeApplicationChanged(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              isCodexApplication(app) else {
+            return
+        }
+        markCompletedSessionsRead()
+    }
+
+    private func isCodexApplication(_ app: NSRunningApplication) -> Bool {
+        let bundleID = (app.bundleIdentifier ?? "").lowercased()
+        let name = (app.localizedName ?? "").lowercased()
+        if bundleID == "com.jiyuanzheng.codex-status-bar" || name == "codex status bar" {
+            return false
+        }
+        return name == "codex" || (name.contains("codex") && !name.contains("status bar"))
+    }
+
+    private func markCompletedSessionsRead() {
+        guard let data = try? Data(contentsOf: sessionsURL),
+              let sessions = try? JSONDecoder().decode([String: CodexSessionSummary].self, from: data) else {
+            return
+        }
+        let keys = sessions.values.filter {
+            StatusLevel(session: $0) == .done
+                && ($0.showInBoard ?? true) != false
+                && !isInternalSession($0)
+        }.compactMap { dismissKey(for: $0) }
+        guard !keys.isEmpty else {
+            return
+        }
+        recordDismissed(keys)
+        refresh()
     }
 
     private func isInternalSession(_ session: CodexSessionSummary) -> Bool {
@@ -778,13 +866,25 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     }
 
     private func cleanDisplay(_ value: String) -> String {
-        var text = value.replacingOccurrences(of: "\n", with: " ")
+        var text = (jsonTitle(from: value) ?? value).replacingOccurrences(of: "\n", with: " ")
         while text.hasPrefix("#") {
             text.removeFirst()
         }
         text = text.replacingOccurrences(of: "`", with: "")
         text = text.replacingOccurrences(of: "*", with: "")
         return text.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func jsonTitle(from value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"),
+              let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let title = object["title"] as? String else {
+            return nil
+        }
+        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private func threadTitle(from transcriptPath: String) -> String? {

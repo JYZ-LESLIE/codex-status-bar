@@ -38,7 +38,26 @@ def _clean_text(value: object, fallback: str) -> str:
     return text or fallback
 
 
+def _json_title(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    title = parsed.get("title")
+    if not title:
+        return None
+    return str(title)
+
+
 def _display_text(value: object, fallback: str) -> str:
+    value = _json_title(value) or value
     text = _clean_text(value, fallback)
     text = re.sub(r"^#+\s*", "", text)
     text = text.replace("`", "").replace("*", "")
@@ -287,6 +306,30 @@ def _should_alert(level: str) -> bool:
     return level in {"done", "needs_feedback"}
 
 
+def _has_meaningful_activity(existing: dict | None) -> bool:
+    if not existing:
+        return False
+    tracked_activity = any(
+        existing.get(key) is True
+        for key in ("had_user_prompt", "had_tool_activity")
+    )
+    visible_activity = existing.get("show_in_board") is True and existing.get("hook_event_name") != "SessionStart"
+    return tracked_activity or visible_activity
+
+
+def _session_flags(existing: dict | None, event_name: str | None, is_internal: bool) -> tuple[bool, bool, bool]:
+    had_user_prompt = bool(existing and existing.get("had_user_prompt")) or event_name == "UserPromptSubmit"
+    had_tool_activity = bool(existing and existing.get("had_tool_activity")) or event_name in {"PreToolUse", "PostToolUse"}
+
+    if is_internal:
+        return had_user_prompt, had_tool_activity, False
+    if event_name == "SessionStart":
+        return had_user_prompt, had_tool_activity, False
+    if event_name == "Stop":
+        return had_user_prompt, had_tool_activity, _has_meaningful_activity(existing)
+    return had_user_prompt, had_tool_activity, True
+
+
 def _should_preserve_attention(existing: dict | None, event_name: str | None, requires_user: bool) -> bool:
     if not existing or requires_user:
         return False
@@ -360,6 +403,9 @@ def _write_sessions(event: dict) -> None:
             "progress": event["progress"],
             "timestamp": event["timestamp"],
         }
+        preserved["had_user_prompt"] = bool(existing.get("had_user_prompt")) or bool(event.get("had_user_prompt"))
+        preserved["had_tool_activity"] = bool(existing.get("had_tool_activity")) or bool(event.get("had_tool_activity"))
+        preserved["show_in_board"] = bool(existing.get("show_in_board", True))
         sessions[key] = preserved
     else:
         sessions[key] = {
@@ -380,6 +426,9 @@ def _write_sessions(event: dict) -> None:
             "display_title": event["display_title"],
             "display_subtitle": event["display_subtitle"],
             "is_internal": event["is_internal"],
+            "show_in_board": event["show_in_board"],
+            "had_user_prompt": event["had_user_prompt"],
+            "had_tool_activity": event["had_tool_activity"],
             "session_id": event["session_id"],
             "turn_id": event["turn_id"],
             "transcript_path": event["transcript_path"],
@@ -415,6 +464,9 @@ def _write_event(payload: dict) -> None:
     task_type, task_label, task_color = _infer_task(payload, event_name, level)
     title, body, progress = _summary(payload, level)
     display_title, display_subtitle, is_internal = _display_fields(payload, event_name, task_label, body, progress)
+    existing = _read_sessions().get(_session_key(payload))
+    had_user_prompt, had_tool_activity, show_in_board = _session_flags(existing, event_name, is_internal)
+    should_alert = _should_alert(level) and show_in_board
 
     event = {
         "event_id": f"{int(now * 1000)}-{uuid.uuid4().hex[:10]}",
@@ -425,8 +477,8 @@ def _write_event(payload: dict) -> None:
         "level": level,
         "status_label": _status_label(level),
         "requires_user": requires_user,
-        "should_alert": _should_alert(level),
-        "priority": priority,
+        "should_alert": should_alert,
+        "priority": priority if show_in_board else 0,
         "task_type": task_type,
         "task_label": task_label,
         "task_color": task_color,
@@ -434,6 +486,9 @@ def _write_event(payload: dict) -> None:
         "display_title": display_title,
         "display_subtitle": display_subtitle,
         "is_internal": is_internal,
+        "show_in_board": show_in_board,
+        "had_user_prompt": had_user_prompt,
+        "had_tool_activity": had_tool_activity,
         "session_id": payload.get("session_id"),
         "turn_id": payload.get("turn_id"),
         "transcript_path": payload.get("transcript_path"),
