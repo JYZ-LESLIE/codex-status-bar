@@ -461,9 +461,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
     private func addLegend(to menu: NSMenu) {
         menu.addItem(.separator())
-        let header = NSMenuItem(title: "颜色说明", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
+        let legendItem = NSMenuItem(title: "颜色说明", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "颜色说明")
 
         let entries: [(String, String)] = [
             ("#C2410C", "橙红：需要确认/反馈"),
@@ -477,8 +476,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             let item = NSMenuItem(title: entry.1, action: nil, keyEquivalent: "")
             item.image = dotImage(color: colorFromHex(entry.0) ?? .secondaryLabelColor)
             item.isEnabled = false
-            menu.addItem(item)
+            submenu.addItem(item)
         }
+        menu.addItem(legendItem)
+        menu.setSubmenu(submenu, for: legendItem)
     }
 
     private func addSessionSection(title: String, sessions: [CodexSessionSummary], to menu: NSMenu) {

@@ -22,6 +22,7 @@ This project focuses on that narrower problem:
 - 优先读取 Codex 线程名，避免把 `codex`、`screen_recording` 当成任务名
 - 自动隐藏 `screen_recording` / `Memory summary` 这类后台摘要
 - 会话行可直接点击打开对应 Codex 线程
+- 颜色说明收在二级菜单里，不占主任务列表空间
 - 写代码、跑工具、收到指令时不弹窗，只在菜单里更新
 - 完成、需要反馈时才发明显提醒
 - 不扫描历史 rollout 文件
