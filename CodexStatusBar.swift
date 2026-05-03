@@ -13,6 +13,10 @@ private struct CodexStatusEvent: Decodable {
     let requiresUser: Bool?
     let shouldAlert: Bool?
     let priority: Int?
+    let taskType: String?
+    let taskLabel: String?
+    let taskColor: String?
+    let statusColor: String?
     let sessionID: String?
     let workspace: String?
     let project: String?
@@ -31,6 +35,10 @@ private struct CodexStatusEvent: Decodable {
         case requiresUser = "requires_user"
         case shouldAlert = "should_alert"
         case priority
+        case taskType = "task_type"
+        case taskLabel = "task_label"
+        case taskColor = "task_color"
+        case statusColor = "status_color"
         case sessionID = "session_id"
         case workspace
         case project
@@ -51,6 +59,10 @@ private struct CodexSessionSummary: Decodable {
     let requiresUser: Bool?
     let shouldAlert: Bool?
     let priority: Int?
+    let taskType: String?
+    let taskLabel: String?
+    let taskColor: String?
+    let statusColor: String?
     let sessionID: String?
     let workspace: String?
     let project: String?
@@ -69,6 +81,10 @@ private struct CodexSessionSummary: Decodable {
         case requiresUser = "requires_user"
         case shouldAlert = "should_alert"
         case priority
+        case taskType = "task_type"
+        case taskLabel = "task_label"
+        case taskColor = "task_color"
+        case statusColor = "status_color"
         case sessionID = "session_id"
         case workspace
         case project
@@ -203,8 +219,9 @@ private final class IslandContentView: NSView {
     func update(event: CodexStatusEvent?) {
         level = StatusLevel(event: event)
         badgeLabel.stringValue = level.label
+        let task = event?.taskLabel ?? level.label
         titleLabel.stringValue = event?.title ?? "Codex 空闲"
-        bodyLabel.stringValue = event?.body ?? "等待 Codex 事件"
+        bodyLabel.stringValue = "\(task) · \(event?.body ?? "等待 Codex 事件")"
         needsDisplay = true
     }
 
@@ -313,11 +330,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         let progress = event?.progress ?? event?.body ?? "新的 Codex 动态会显示在这里。"
 
         if let button = statusItem.button {
-            button.title = shortStatusTitle(event: event, sessions: sessions)
+            button.attributedTitle = statusBarTitle(event: event, sessions: sessions)
             button.toolTip = tooltipTitle(event: event, sessions: sessions)
         }
 
         let headline = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        headline.image = dotImage(color: colorFor(event: event))
         headline.isEnabled = false
         menu.addItem(headline)
 
@@ -350,6 +368,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
         }
+        addLegend(to: menu)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "打开 Codex", action: #selector(openCodex), keyEquivalent: "o"))
@@ -365,6 +384,28 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         statusItem.menu = menu
     }
 
+    private func addLegend(to menu: NSMenu) {
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: "颜色说明", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        let entries: [(String, String)] = [
+            ("#C2410C", "橙红：需要确认/反馈"),
+            ("#2563EB", "蓝：写代码/处理中"),
+            ("#0F766E", "青：测试/构建"),
+            ("#7C3AED", "紫：GitHub 发布"),
+            ("#15803D", "绿：完成"),
+            ("#475569", "灰：查看/资料")
+        ]
+        for entry in entries {
+            let item = NSMenuItem(title: entry.1, action: nil, keyEquivalent: "")
+            item.image = dotImage(color: colorFromHex(entry.0) ?? .secondaryLabelColor)
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+    }
+
     private func addSessionSection(title: String, sessions: [CodexSessionSummary], to menu: NSMenu) {
         guard !sessions.isEmpty else {
             return
@@ -376,14 +417,45 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             let level = StatusLevel(session: session)
             let project = session.project ?? session.workspace ?? "Workspace"
             let text = session.progress ?? session.body ?? session.title ?? "等待事件"
+            let task = taskLabel(for: session)
             let item = NSMenuItem(
-                title: "\(level.label) | \(menuSafe(project, limit: 24)) | \(menuSafe(text, limit: 48))",
-                action: nil,
+                title: "\(level.label) | \(task) | \(menuSafe(project, limit: 22)) | \(menuSafe(text, limit: 42))",
+                action: session.sessionID?.isEmpty == false ? #selector(openCurrentThread) : nil,
                 keyEquivalent: ""
             )
-            item.isEnabled = false
+            item.image = dotImage(color: colorFor(session: session))
+            item.representedObject = session.sessionID
+            item.isEnabled = session.sessionID?.isEmpty == false
             menu.addItem(item)
         }
+    }
+
+    private func statusBarTitle(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) -> NSAttributedString {
+        let text: String
+        let color: NSColor
+        if let top = topSessionForStatus(sessions) {
+            text = sessionStatusTitle(top)
+            color = colorFor(session: top)
+        } else {
+            text = shortStatusTitle(event: event, sessions: sessions)
+            color = colorFor(event: event)
+        }
+
+        let result = NSMutableAttributedString(
+            string: "● ",
+            attributes: [
+                .foregroundColor: color,
+                .font: NSFont.systemFont(ofSize: 13, weight: .bold)
+            ]
+        )
+        result.append(NSAttributedString(
+            string: text,
+            attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold)
+            ]
+        ))
+        return result
     }
 
     private func shortStatusTitle(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) -> String {
@@ -402,10 +474,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     private func sessionStatusTitle(_ session: CodexSessionSummary) -> String {
         let level = StatusLevel(session: session)
         let project = session.project ?? session.workspace ?? ""
+        let task = taskLabel(for: session)
         guard !project.isEmpty else {
-            return level.menuTitle
+            return "\(level.menuTitle) · \(task)"
         }
-        return "\(level.menuTitle) · \(menuSafe(project, limit: 18))"
+        return "\(level.menuTitle) · \(task) · \(menuSafe(project, limit: 16))"
     }
 
     private func tooltipTitle(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) -> String {
@@ -496,6 +569,65 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         }
         let end = compact.index(compact.startIndex, offsetBy: max(1, limit - 1))
         return String(compact[..<end]) + "..."
+    }
+
+    private func taskLabel(for session: CodexSessionSummary) -> String {
+        if let label = session.taskLabel, !label.isEmpty {
+            return label
+        }
+        switch StatusLevel(session: session) {
+        case .needsFeedback: return "要反馈"
+        case .done: return "完成"
+        case .running: return "处理"
+        case .idle: return "空闲"
+        }
+    }
+
+    private func colorFor(event: CodexStatusEvent?) -> NSColor {
+        if let hex = event?.statusColor, let color = colorFromHex(hex) {
+            return color
+        }
+        return StatusLevel(event: event).borderColor
+    }
+
+    private func colorFor(session: CodexSessionSummary) -> NSColor {
+        if session.requiresUser == true,
+           let hex = session.statusColor,
+           let color = colorFromHex(hex) {
+            return color
+        }
+        if let hex = session.taskColor, let color = colorFromHex(hex) {
+            return color
+        }
+        if let hex = session.statusColor, let color = colorFromHex(hex) {
+            return color
+        }
+        return StatusLevel(session: session).borderColor
+    }
+
+    private func colorFromHex(_ value: String) -> NSColor? {
+        let hex = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard hex.count == 6 else {
+            return nil
+        }
+        guard let number = Int(hex, radix: 16) else {
+            return nil
+        }
+        let red = CGFloat((number >> 16) & 0xFF) / 255.0
+        let green = CGFloat((number >> 8) & 0xFF) / 255.0
+        let blue = CGFloat(number & 0xFF) / 255.0
+        return NSColor(calibratedRed: red, green: green, blue: blue, alpha: 1.0)
+    }
+
+    private func dotImage(color: NSColor) -> NSImage {
+        let size = NSSize(width: 12, height: 12)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 8, height: 8)).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 
     private func notify(_ event: CodexStatusEvent) {

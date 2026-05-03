@@ -2,7 +2,7 @@
 
 Codex Status Bar 是一个给 Codex 用的 macOS 菜单栏 + 顶部岛状提醒工具，默认中文运行。它适合在 MacBook 刘海屏和外接显示器之间切换的人。
 
-它监听 Codex hook 事件，写入本地事件日志，在菜单栏显示最新状态和多会话进度。运行中只静默更新菜单；只有“已完成 / 需要反馈”时才在屏幕顶部显示岛状提示并发送 macOS 通知。
+它监听 Codex hook 事件，写入本地事件日志，在菜单栏显示最新状态、多会话进度和任务分诊。运行中只静默更新菜单；只有“已完成 / 需要反馈”时才在屏幕顶部显示岛状提示并发送 macOS 通知。
 
 English: this is a small Chinese-first macOS menu bar and top-island notifier for Codex.
 
@@ -17,6 +17,8 @@ This project focuses on that narrower problem:
 - 明确显示 `运行中`、`已完成`、`需要反馈`
 - 同时显示多个 Codex 会话的项目名和最新进度
 - 菜单按 `需要你看 / 运行中 / 最近完成` 分组
+- 用颜色区分任务：需要确认、写代码、测试构建、GitHub 发布、完成、资料查看
+- 会话行可直接点击打开对应 Codex 线程
 - 写代码、跑工具、收到指令时不弹窗，只在菜单里更新
 - 完成、需要反馈时才发明显提醒
 - 不扫描历史 rollout 文件
@@ -48,6 +50,7 @@ This project focuses on that narrower problem:
 - 增加多会话进度账本，方便同时跑多个 Codex 对话
 - 区分静默进度更新和必须看见的反馈提醒
 - 为事件增加 `kind / phase / requires_user / priority` 状态字段
+- 为事件增加 `task_type / task_label / task_color / status_color` 任务分诊字段
 - 避免扫描 `~/.codex/sessions/**/rollout-*.jsonl`
 - 增加本地 JSONL 事件日志
 - 大工具输出只记录长度，不把完整响应塞进事件日志

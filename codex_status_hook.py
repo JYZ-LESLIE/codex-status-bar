@@ -105,6 +105,83 @@ def _classification(event_name: str | None) -> tuple[str, str, bool, int]:
     return "progress", "running", False, 10
 
 
+def _tool_text(payload: dict) -> str:
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict):
+        parts = []
+        for key in ("command", "cmd", "description", "path", "file_path", "workdir"):
+            if tool_input.get(key):
+                parts.append(str(tool_input.get(key)))
+        return " ".join(parts)
+    return str(tool_input or "")
+
+
+def _task_color(task_type: str) -> str:
+    return {
+        "feedback": "#C2410C",
+        "code": "#2563EB",
+        "test": "#0F766E",
+        "release": "#7C3AED",
+        "git": "#4F46E5",
+        "research": "#475569",
+        "browser": "#0284C7",
+        "document": "#B45309",
+        "complete": "#15803D",
+        "start": "#6B7280",
+        "tool": "#4B5563",
+    }.get(task_type, "#4B5563")
+
+
+def _status_color(level: str) -> str:
+    if level == "needs_feedback":
+        return "#C2410C"
+    if level == "done":
+        return "#15803D"
+    return "#2563EB"
+
+
+def _infer_task(payload: dict, event_name: str | None, level: str) -> tuple[str, str, str]:
+    tool = str(payload.get("tool_name") or "")
+    tool_lower = tool.lower()
+    text = " ".join(
+        [
+            str(event_name or ""),
+            tool,
+            _tool_text(payload),
+            str(payload.get("prompt") or ""),
+            str(payload.get("message") or ""),
+        ]
+    ).lower()
+
+    if level == "needs_feedback":
+        if event_name == "PermissionRequest":
+            return "feedback", "要确认", _task_color("feedback")
+        return "feedback", "要反馈", _task_color("feedback")
+    if event_name == "Stop":
+        return "complete", "完成", _task_color("complete")
+    if event_name in {"SessionStart", "UserPromptSubmit"}:
+        return "start", "新任务", _task_color("start")
+    if "apply_patch" in text or "patch" in tool_lower:
+        return "code", "写代码", _task_color("code")
+    if "gh release" in text or "git push" in text or "git tag" in text or "release" in text:
+        return "release", "发布", _task_color("release")
+    if "git " in text or tool_lower == "git":
+        return "git", "Git", _task_color("git")
+    if any(word in text for word in ("test", "pytest", "swift test", "npm test", "build", "swiftc", "py_compile")):
+        return "test", "测试", _task_color("test")
+    if any(word in text for word in ("rg ", "grep", "sed ", "cat ", "ls ", "find ", "tail ", "head ", "nl ")):
+        return "research", "查看", _task_color("research")
+    if any(word in text for word in ("web", "search", "open", "fetch", "curl", "http")):
+        return "research", "资料", _task_color("research")
+    if any(word in tool_lower for word in ("browser", "computer", "playwright")):
+        return "browser", "浏览器", _task_color("browser")
+    if any(word in text for word in ("readme", ".md", ".txt", "doc", "release_notes")):
+        return "document", "文档", _task_color("document")
+    if tool:
+        return "tool", "工具", _task_color("tool")
+    return "tool", "处理", _task_color("tool")
+
+
 def _status_label(level: str) -> str:
     if level == "needs_feedback":
         return "需要你"
@@ -203,6 +280,10 @@ def _write_sessions(event: dict) -> None:
             "requires_user": event["requires_user"],
             "should_alert": event["should_alert"],
             "priority": event["priority"],
+            "task_type": event["task_type"],
+            "task_label": event["task_label"],
+            "task_color": event["task_color"],
+            "status_color": event["status_color"],
             "session_id": event["session_id"],
             "turn_id": event["turn_id"],
             "transcript_path": event["transcript_path"],
@@ -235,6 +316,7 @@ def _write_event(payload: dict) -> None:
     event_name = payload.get("hook_event_name")
     level = _level(event_name)
     kind, phase, requires_user, priority = _classification(event_name)
+    task_type, task_label, task_color = _infer_task(payload, event_name, level)
     title, body, progress = _summary(payload, level)
 
     event = {
@@ -248,6 +330,10 @@ def _write_event(payload: dict) -> None:
         "requires_user": requires_user,
         "should_alert": _should_alert(level),
         "priority": priority,
+        "task_type": task_type,
+        "task_label": task_label,
+        "task_color": task_color,
+        "status_color": _status_color(level),
         "session_id": payload.get("session_id"),
         "turn_id": payload.get("turn_id"),
         "transcript_path": payload.get("transcript_path"),
