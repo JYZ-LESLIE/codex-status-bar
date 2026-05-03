@@ -40,6 +40,9 @@ def _summary(payload: dict) -> tuple[str, str]:
 
     if event == "SessionStart":
         return "Codex running", f"Started in {workspace}"
+    if event in {"Notification", "PermissionRequest"}:
+        text = str(prompt or assistant or "Codex needs your attention").strip()
+        return "Codex needs feedback", text[:160]
     if event == "UserPromptSubmit":
         text = str(prompt or "New prompt received").strip()
         return "Codex prompt", text[:160]
@@ -60,10 +63,19 @@ def _write_event(payload: dict) -> None:
     now = time.time()
     title, body = _summary(payload)
     cwd = str(payload.get("cwd") or "")
+    event_name = payload.get("hook_event_name")
+    if event_name in {"Notification", "PermissionRequest"}:
+        level = "needs_feedback"
+    elif event_name == "Stop":
+        level = "done"
+    else:
+        level = "running"
+
     event = {
         "event_id": f"{int(now * 1000)}-{uuid.uuid4().hex[:10]}",
         "timestamp": now,
-        "hook_event_name": payload.get("hook_event_name"),
+        "hook_event_name": event_name,
+        "level": level,
         "session_id": payload.get("session_id"),
         "turn_id": payload.get("turn_id"),
         "cwd": cwd,

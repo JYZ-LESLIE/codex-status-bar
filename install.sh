@@ -11,6 +11,8 @@ HOOKS_JSON="$CONFIG_DIR/hooks.json"
 
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$APP_SUPPORT/bin" "$HOME/Library/LaunchAgents" "$CONFIG_DIR"
 
+pkill -f "Codex Status Bar.app/Contents/MacOS/CodexStatusBar" 2>/dev/null || true
+
 swiftc -O -framework AppKit -framework UserNotifications \
   "$ROOT/CodexStatusBar.swift" \
   -o "$APP_DIR/Contents/MacOS/CodexStatusBar"

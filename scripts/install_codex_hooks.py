@@ -8,7 +8,14 @@ import time
 from pathlib import Path
 
 
-EVENTS = ("SessionStart", "UserPromptSubmit", "Stop")
+EVENTS = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Notification",
+    "Stop",
+)
 
 
 def quote_command(path: str) -> str:

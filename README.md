@@ -1,8 +1,8 @@
 # Codex Status Bar
 
-Codex Status Bar is a tiny macOS menu bar notifier for Codex. It is built for people who work on external monitors and cannot rely on a MacBook notch or Dynamic Island style overlay.
+Codex Status Bar is a tiny macOS menu bar and top-island notifier for Codex. It is built for people who move between a MacBook notch display and external monitors.
 
-It listens to Codex hook events, writes a local event log, shows the latest Codex state in the menu bar, and sends macOS notifications when a prompt is submitted or a turn completes.
+It listens to Codex hook events, writes a local event log, shows the latest Codex state in the menu bar, displays a top-center island, and sends macOS notifications when a prompt is submitted, a turn completes, or Codex needs feedback.
 
 ## Why this exists
 
@@ -11,7 +11,9 @@ Vibe Island and Open Island showed that AI coding agents need a lightweight ambi
 This project focuses on that narrower problem:
 
 - menu bar first, so it works on external displays
-- notifications for prompt and completion events
+- top-island overlay on the active screen, including MacBook notch displays
+- obvious `DONE` and `NEEDS FEEDBACK` markers
+- notifications for prompt, completion, and feedback-needed events
 - no historical rollout scan
 - fail-open hook behavior, so Codex keeps working if the status app is not running
 
@@ -35,7 +37,8 @@ The event history is preserved under `~/Library/Application Support/CodexStatusB
 
 This is not a clone of Vibe Island or Open Island. It borrows the product insight that coding agents need ambient status, but changes the implementation surface:
 
-- replaces notch-first UI with a menu bar item
+- combines a menu bar item with a lightweight top island
+- works on both MacBook notch displays and external monitors
 - keeps the event source to current Codex hooks only
 - avoids scanning `~/.codex/sessions/**/rollout-*.jsonl`
 - adds a simple local JSONL event log
