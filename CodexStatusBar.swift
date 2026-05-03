@@ -6,21 +6,75 @@ private struct CodexStatusEvent: Decodable {
     let eventID: String
     let timestamp: TimeInterval
     let hookEventName: String?
+    let kind: String?
+    let phase: String?
     let level: String?
+    let statusLabel: String?
+    let requiresUser: Bool?
+    let shouldAlert: Bool?
+    let priority: Int?
     let sessionID: String?
     let workspace: String?
+    let project: String?
     let title: String?
     let body: String?
+    let progress: String?
 
     enum CodingKeys: String, CodingKey {
         case eventID = "event_id"
         case timestamp
         case hookEventName = "hook_event_name"
+        case kind
+        case phase
         case level
+        case statusLabel = "status_label"
+        case requiresUser = "requires_user"
+        case shouldAlert = "should_alert"
+        case priority
         case sessionID = "session_id"
         case workspace
+        case project
         case title
         case body
+        case progress
+    }
+}
+
+private struct CodexSessionSummary: Decodable {
+    let eventID: String?
+    let timestamp: TimeInterval?
+    let hookEventName: String?
+    let kind: String?
+    let phase: String?
+    let level: String?
+    let statusLabel: String?
+    let requiresUser: Bool?
+    let shouldAlert: Bool?
+    let priority: Int?
+    let sessionID: String?
+    let workspace: String?
+    let project: String?
+    let title: String?
+    let body: String?
+    let progress: String?
+
+    enum CodingKeys: String, CodingKey {
+        case eventID = "event_id"
+        case timestamp
+        case hookEventName = "hook_event_name"
+        case kind
+        case phase
+        case level
+        case statusLabel = "status_label"
+        case requiresUser = "requires_user"
+        case shouldAlert = "should_alert"
+        case priority
+        case sessionID = "session_id"
+        case workspace
+        case project
+        case title
+        case body
+        case progress
     }
 }
 
@@ -30,8 +84,8 @@ private enum StatusLevel {
     case done
     case needsFeedback
 
-    init(event: CodexStatusEvent?) {
-        switch event?.level {
+    init(level: String?, hookEventName: String?) {
+        switch level {
         case "needs_feedback":
             self = .needsFeedback
         case "done":
@@ -39,7 +93,7 @@ private enum StatusLevel {
         case "running":
             self = .running
         default:
-            switch event?.hookEventName {
+            switch hookEventName {
             case "Notification", "PermissionRequest":
                 self = .needsFeedback
             case "Stop":
@@ -50,6 +104,14 @@ private enum StatusLevel {
                 self = .running
             }
         }
+    }
+
+    init(event: CodexStatusEvent?) {
+        self.init(level: event?.level, hookEventName: event?.hookEventName)
+    }
+
+    init(session: CodexSessionSummary) {
+        self.init(level: session.level, hookEventName: session.hookEventName)
     }
 
     var label: String {
@@ -223,33 +285,36 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         .appendingPathComponent("Library/Application Support/CodexStatusBar/latest.json")
     private let eventsURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/CodexStatusBar/events.jsonl")
+    private let sessionsURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/CodexStatusBar/sessions.json")
     private let island = IslandWindowController()
 
     private var timer: Timer?
     private var latestEventID: String?
     private var hasLoadedInitialEvent = false
+    private let launchTime = Date().timeIntervalSince1970
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
-        configureMenu(event: nil)
+        configureMenu(event: nil, sessions: [])
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
     }
 
-    private func configureMenu(event: CodexStatusEvent?) {
+    private func configureMenu(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) {
         let menu = NSMenu()
         let title = event?.title ?? "Codex 空闲"
-        let workspace = event?.workspace ?? "等待 Codex 事件"
-        let body = event?.body ?? "新的 Codex 动态会显示在这里。"
+        let workspace = event?.project ?? event?.workspace ?? "等待 Codex 事件"
+        let progress = event?.progress ?? event?.body ?? "新的 Codex 动态会显示在这里。"
 
         if let button = statusItem.button {
-            button.title = shortStatusTitle(for: event)
-            button.toolTip = "\(title)\n\(body)"
+            button.title = shortStatusTitle(event: event, sessions: sessions)
+            button.toolTip = tooltipTitle(event: event, sessions: sessions)
         }
 
         let headline = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -260,13 +325,36 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         workspaceItem.isEnabled = false
         menu.addItem(workspaceItem)
 
-        let bodyItem = NSMenuItem(title: body, action: nil, keyEquivalent: "")
-        bodyItem.isEnabled = false
-        menu.addItem(bodyItem)
+        let progressItem = NSMenuItem(title: "进度：\(menuSafe(progress, limit: 72))", action: nil, keyEquivalent: "")
+        progressItem.isEnabled = false
+        menu.addItem(progressItem)
+
+        menu.addItem(.separator())
+        addSessionSection(
+            title: "需要你看",
+            sessions: sessions.filter { $0.requiresUser == true },
+            to: menu
+        )
+        addSessionSection(
+            title: "运行中",
+            sessions: sessions.filter { StatusLevel(session: $0) == .running && $0.requiresUser != true },
+            to: menu
+        )
+        addSessionSection(
+            title: "最近完成",
+            sessions: sessions.filter { StatusLevel(session: $0) == .done },
+            to: menu
+        )
+        if sessions.isEmpty {
+            let emptyItem = NSMenuItem(title: "暂无会话进度", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
+        }
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "打开 Codex", action: #selector(openCodex), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "打开事件日志", action: #selector(openEventLog), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "打开会话进度", action: #selector(openSessions), keyEquivalent: "s"))
         if let sessionID = event?.sessionID, !sessionID.isEmpty {
             let item = NSMenuItem(title: "打开当前线程", action: #selector(openCurrentThread), keyEquivalent: "t")
             item.representedObject = sessionID
@@ -277,8 +365,68 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         statusItem.menu = menu
     }
 
-    private func shortStatusTitle(for event: CodexStatusEvent?) -> String {
-        StatusLevel(event: event).menuTitle
+    private func addSessionSection(title: String, sessions: [CodexSessionSummary], to menu: NSMenu) {
+        guard !sessions.isEmpty else {
+            return
+        }
+        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for session in sessions.prefix(6) {
+            let level = StatusLevel(session: session)
+            let project = session.project ?? session.workspace ?? "Workspace"
+            let text = session.progress ?? session.body ?? session.title ?? "等待事件"
+            let item = NSMenuItem(
+                title: "\(level.label) | \(menuSafe(project, limit: 24)) | \(menuSafe(text, limit: 48))",
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+    }
+
+    private func shortStatusTitle(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) -> String {
+        if let top = topSessionForStatus(sessions) {
+            return sessionStatusTitle(top)
+        }
+        let level = StatusLevel(event: event)
+        guard level != .idle,
+              let project = event?.project ?? event?.workspace,
+              !project.isEmpty else {
+            return level.menuTitle
+        }
+        return "\(level.menuTitle) · \(menuSafe(project, limit: 18))"
+    }
+
+    private func sessionStatusTitle(_ session: CodexSessionSummary) -> String {
+        let level = StatusLevel(session: session)
+        let project = session.project ?? session.workspace ?? ""
+        guard !project.isEmpty else {
+            return level.menuTitle
+        }
+        return "\(level.menuTitle) · \(menuSafe(project, limit: 18))"
+    }
+
+    private func tooltipTitle(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) -> String {
+        if let top = topSessionForStatus(sessions) {
+            let title = top.title ?? sessionStatusTitle(top)
+            let text = top.progress ?? top.body ?? "等待事件"
+            return "\(title)\n\(text)"
+        }
+        let title = event?.title ?? "Codex 空闲"
+        let text = event?.progress ?? event?.body ?? "新的 Codex 动态会显示在这里。"
+        return "\(title)\n\(text)"
+    }
+
+    private func topSessionForStatus(_ sessions: [CodexSessionSummary]) -> CodexSessionSummary? {
+        if let attention = sessions.first(where: { $0.requiresUser == true }) {
+            return attention
+        }
+        if let running = sessions.first(where: { StatusLevel(session: $0) == .running }) {
+            return running
+        }
+        return sessions.first
     }
 
     private func refresh() {
@@ -286,14 +434,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
               let event = try? JSONDecoder().decode(CodexStatusEvent.self, from: data) else {
             return
         }
+        let sessions = loadSessions()
 
-        configureMenu(event: event)
+        configureMenu(event: event, sessions: sessions)
         if latestEventID != event.eventID {
-            let shouldNotify = hasLoadedInitialEvent && shouldNotify(for: event)
+            let isLiveAfterLaunch = event.timestamp >= launchTime - 2
+            let shouldNotify = (hasLoadedInitialEvent || isLiveAfterLaunch) && shouldNotify(for: event)
             latestEventID = event.eventID
             hasLoadedInitialEvent = true
-            island.show(event: event)
             if shouldNotify {
+                island.show(event: event)
                 notify(event)
             }
         } else {
@@ -305,8 +455,47 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         guard Date().timeIntervalSince1970 - event.timestamp < 30 else {
             return false
         }
+        if let explicit = event.shouldAlert {
+            return explicit
+        }
         let level = StatusLevel(event: event)
-        return level == .done || level == .needsFeedback || event.hookEventName == "UserPromptSubmit"
+        return level == .done || level == .needsFeedback
+    }
+
+    private func loadSessions() -> [CodexSessionSummary] {
+        guard let data = try? Data(contentsOf: sessionsURL),
+              let sessions = try? JSONDecoder().decode([String: CodexSessionSummary].self, from: data) else {
+            return []
+        }
+        return sessions.values.sorted {
+            let leftPriority = $0.priority ?? priorityFallback(for: $0)
+            let rightPriority = $1.priority ?? priorityFallback(for: $1)
+            if leftPriority != rightPriority {
+                return leftPriority > rightPriority
+            }
+            return ($0.timestamp ?? 0) > ($1.timestamp ?? 0)
+        }
+    }
+
+    private func priorityFallback(for session: CodexSessionSummary) -> Int {
+        if session.requiresUser == true {
+            return 90
+        }
+        switch StatusLevel(session: session) {
+        case .needsFeedback: return 90
+        case .running: return 30
+        case .done: return 15
+        case .idle: return 0
+        }
+    }
+
+    private func menuSafe(_ value: String, limit: Int) -> String {
+        let compact = value.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if compact.count <= limit {
+            return compact
+        }
+        let end = compact.index(compact.startIndex, offsetBy: max(1, limit - 1))
+        return String(compact[..<end]) + "..."
     }
 
     private func notify(_ event: CodexStatusEvent) {
@@ -335,6 +524,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
     @objc private func openEventLog() {
         NSWorkspace.shared.activateFileViewerSelecting([eventsURL])
+    }
+
+    @objc private func openSessions() {
+        NSWorkspace.shared.activateFileViewerSelecting([sessionsURL])
     }
 
     @objc private func openCurrentThread(_ sender: NSMenuItem) {
