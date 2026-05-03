@@ -315,16 +315,28 @@ private final class IslandWindowController {
 private final class SessionCardView: NSView {
     private let color: NSColor
     private let sessionID: String?
+    private let dismissKey: String?
     private let statusSymbol: String
     private let titleText: String
     private let subtitleText: String
+    private let onOpen: (String, String?) -> Void
 
-    init(title: String, subtitle: String, statusSymbol: String, color: NSColor, sessionID: String?) {
+    init(
+        title: String,
+        subtitle: String,
+        statusSymbol: String,
+        color: NSColor,
+        sessionID: String?,
+        dismissKey: String?,
+        onOpen: @escaping (String, String?) -> Void
+    ) {
         self.titleText = title
         self.subtitleText = subtitle
         self.statusSymbol = statusSymbol
         self.color = color
         self.sessionID = sessionID
+        self.dismissKey = dismissKey
+        self.onOpen = onOpen
         super.init(frame: NSRect(x: 0, y: 0, width: 540, height: 78))
         wantsLayer = true
         toolTip = sessionID?.isEmpty == false ? "点击打开这个 Codex 线程" : nil
@@ -374,11 +386,10 @@ private final class SessionCardView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let sessionID, !sessionID.isEmpty,
-              let url = URL(string: "codex://threads/\(sessionID)") else {
+        guard let sessionID, !sessionID.isEmpty else {
             return
         }
-        NSWorkspace.shared.open(url)
+        onOpen(sessionID, dismissKey)
     }
 }
 
@@ -390,6 +401,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         .appendingPathComponent("Library/Application Support/CodexStatusBar/events.jsonl")
     private let sessionsURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/CodexStatusBar/sessions.json")
+    private let dismissedURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/CodexStatusBar/dismissed.json")
     private let island = IslandWindowController()
 
     private var timer: Timer?
@@ -449,9 +462,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         menu.addItem(NSMenuItem(title: "打开 Codex", action: #selector(openCodex), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "打开事件日志", action: #selector(openEventLog), keyEquivalent: "l"))
         menu.addItem(NSMenuItem(title: "打开会话进度", action: #selector(openSessions), keyEquivalent: "s"))
-        if let sessionID = event?.sessionID, !sessionID.isEmpty {
+        if let event, let sessionID = event.sessionID, !sessionID.isEmpty {
             let item = NSMenuItem(title: "打开当前线程", action: #selector(openCurrentThread), keyEquivalent: "t")
-            item.representedObject = sessionID
+            item.representedObject = [
+                "session_id": sessionID,
+                "dismiss_key": "\(sessionID)|\(event.eventID)"
+            ]
             menu.addItem(item)
         }
         menu.addItem(.separator())
@@ -496,7 +512,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
                 subtitle: displaySubtitle(for: session),
                 statusSymbol: statusSymbol(for: session),
                 color: colorFor(session: session),
-                sessionID: session.sessionID
+                sessionID: session.sessionID,
+                dismissKey: dismissKey(for: session),
+                onOpen: { [weak self] sessionID, dismissKey in
+                    self?.openThread(sessionID: sessionID, dismissKey: dismissKey)
+                }
             )
             menu.addItem(item)
         }
@@ -607,13 +627,59 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
               let sessions = try? JSONDecoder().decode([String: CodexSessionSummary].self, from: data) else {
             return []
         }
-        return sessions.values.filter { !isInternalSession($0) }.sorted {
+        let dismissed = loadDismissedKeys()
+        return sessions.values.filter {
+            !isInternalSession($0) && !dismissed.contains(dismissKey(for: $0) ?? "")
+        }.sorted {
             let leftPriority = $0.priority ?? priorityFallback(for: $0)
             let rightPriority = $1.priority ?? priorityFallback(for: $1)
             if leftPriority != rightPriority {
                 return leftPriority > rightPriority
             }
             return ($0.timestamp ?? 0) > ($1.timestamp ?? 0)
+        }
+    }
+
+    private func dismissKey(for session: CodexSessionSummary) -> String? {
+        guard let sessionID = session.sessionID, !sessionID.isEmpty else {
+            return nil
+        }
+        if let eventID = session.eventID, !eventID.isEmpty {
+            return "\(sessionID)|\(eventID)"
+        }
+        let timestamp = Int((session.timestamp ?? 0) * 1000)
+        return "\(sessionID)|\(timestamp)"
+    }
+
+    private func loadDismissedKeys() -> Set<String> {
+        guard let data = try? Data(contentsOf: dismissedURL),
+              let dismissed = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else {
+            return []
+        }
+        return Set(dismissed.keys)
+    }
+
+    private func recordDismissed(_ key: String?) {
+        guard let key, !key.isEmpty else {
+            return
+        }
+        var dismissed: [String: TimeInterval] = [:]
+        if let data = try? Data(contentsOf: dismissedURL),
+           let existing = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
+            dismissed = existing
+        }
+        dismissed[key] = Date().timeIntervalSince1970
+        let recent = dismissed.sorted { $0.value > $1.value }.prefix(300)
+        let pruned = Dictionary(uniqueKeysWithValues: recent.map { ($0.key, $0.value) })
+        do {
+            try FileManager.default.createDirectory(
+                at: dismissedURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder().encode(pruned)
+            try data.write(to: dismissedURL, options: .atomic)
+        } catch {
+            return
         }
     }
 
@@ -828,13 +894,28 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         NSWorkspace.shared.activateFileViewerSelecting([sessionsURL])
     }
 
+    private func openThread(sessionID: String, dismissKey: String?) {
+        recordDismissed(dismissKey)
+        if let url = URL(string: "codex://threads/\(sessionID)") {
+            NSWorkspace.shared.open(url)
+        } else {
+            openCodex()
+        }
+        statusItem.menu?.cancelTracking()
+        refresh()
+    }
+
     @objc private func openCurrentThread(_ sender: NSMenuItem) {
-        guard let sessionID = sender.representedObject as? String,
-              let url = URL(string: "codex://threads/\(sessionID)") else {
+        if let target = sender.representedObject as? [String: String],
+           let sessionID = target["session_id"] {
+            openThread(sessionID: sessionID, dismissKey: target["dismiss_key"])
+            return
+        }
+        guard let sessionID = sender.representedObject as? String else {
             openCodex()
             return
         }
-        NSWorkspace.shared.open(url)
+        openThread(sessionID: sessionID, dismissKey: nil)
     }
 
     @objc private func quit() {
