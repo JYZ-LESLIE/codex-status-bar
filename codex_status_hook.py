@@ -14,6 +14,7 @@ import time
 import traceback
 import uuid
 import fcntl
+import re
 from pathlib import Path
 
 
@@ -35,6 +36,67 @@ def _workspace_name(cwd: str | None) -> str:
 def _clean_text(value: object, fallback: str) -> str:
     text = str(value or fallback).replace("\n", " ").strip()
     return text or fallback
+
+
+def _display_text(value: object, fallback: str) -> str:
+    text = _clean_text(value, fallback)
+    text = re.sub(r"^#+\s*", "", text)
+    text = text.replace("`", "").replace("*", "")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or fallback
+
+
+def _is_internal_summary(text: object) -> bool:
+    value = _display_text(text, "").lower()
+    return value.startswith("memory summary") or value.startswith("context of everything")
+
+
+def _compact_title(text: object, fallback: str) -> str:
+    value = _display_text(text, fallback)
+    for sep in ("。", "，", ".", "；", ";", "\n"):
+        if sep in value:
+            value = value.split(sep, 1)[0]
+            break
+    return value[:36].strip() or fallback
+
+
+def _thread_title_from_transcript(path_value: object) -> str | None:
+    if not path_value:
+        return None
+    path = Path(str(path_value)).expanduser()
+    if not path.exists() or not path.is_file():
+        return None
+
+    fallback_user_title: str | None = None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                if index > 260:
+                    break
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                payload = item.get("payload") if isinstance(item, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get("type") == "thread_name_updated":
+                    title = payload.get("thread_name")
+                    if title:
+                        return _compact_title(title, "Codex 任务")
+                if payload.get("type") == "user_message" and not fallback_user_title:
+                    message = str(payload.get("message") or "").strip()
+                    if message and not message.startswith("# AGENTS.md instructions"):
+                        fallback_user_title = _compact_title(message, "Codex 任务")
+                if item.get("type") == "response_item":
+                    inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+                    if isinstance(inner, dict) and inner.get("role") == "user" and not fallback_user_title:
+                        text = json.dumps(inner.get("content") or "", ensure_ascii=False)
+                        if text and "# AGENTS.md instructions" not in text:
+                            fallback_user_title = _compact_title(text, "Codex 任务")
+    except Exception:
+        return None
+    return fallback_user_title
 
 
 def _truncate(value: object, limit: int = 500) -> object:
@@ -138,6 +200,37 @@ def _status_color(level: str) -> str:
     if level == "done":
         return "#15803D"
     return "#2563EB"
+
+
+def _display_fields(payload: dict, event_name: str | None, task_label: str, body: str, progress: str) -> tuple[str, str, bool]:
+    cwd = str(payload.get("cwd") or "")
+    workspace = _workspace_name(cwd)
+    transcript_title = _thread_title_from_transcript(payload.get("transcript_path"))
+    prompt = payload.get("prompt") or payload.get("message")
+    assistant = payload.get("last_assistant_message")
+    internal = workspace == "screen_recording" or _is_internal_summary(body) or _is_internal_summary(progress)
+
+    if transcript_title:
+        title = transcript_title
+    elif prompt:
+        title = _compact_title(prompt, "Codex 任务")
+    elif internal:
+        title = "后台摘要"
+    elif event_name == "Stop" and assistant:
+        title = _compact_title(assistant, "已完成任务")
+    else:
+        title = workspace if workspace != "Workspace" else "Codex 任务"
+
+    if internal:
+        subtitle = "系统后台摘要，默认不进入任务看板"
+    elif event_name in {"PreToolUse", "PostToolUse"}:
+        subtitle = _display_text(progress, "正在处理")
+    elif event_name == "UserPromptSubmit":
+        subtitle = _display_text(progress, "已收到指令")
+    else:
+        subtitle = _display_text(body or progress, "等待更新")
+
+    return title[:46], subtitle[:160], internal
 
 
 def _infer_task(payload: dict, event_name: str | None, level: str) -> tuple[str, str, str]:
@@ -284,6 +377,9 @@ def _write_sessions(event: dict) -> None:
             "task_label": event["task_label"],
             "task_color": event["task_color"],
             "status_color": event["status_color"],
+            "display_title": event["display_title"],
+            "display_subtitle": event["display_subtitle"],
+            "is_internal": event["is_internal"],
             "session_id": event["session_id"],
             "turn_id": event["turn_id"],
             "transcript_path": event["transcript_path"],
@@ -318,6 +414,7 @@ def _write_event(payload: dict) -> None:
     kind, phase, requires_user, priority = _classification(event_name)
     task_type, task_label, task_color = _infer_task(payload, event_name, level)
     title, body, progress = _summary(payload, level)
+    display_title, display_subtitle, is_internal = _display_fields(payload, event_name, task_label, body, progress)
 
     event = {
         "event_id": f"{int(now * 1000)}-{uuid.uuid4().hex[:10]}",
@@ -334,6 +431,9 @@ def _write_event(payload: dict) -> None:
         "task_label": task_label,
         "task_color": task_color,
         "status_color": _status_color(level),
+        "display_title": display_title,
+        "display_subtitle": display_subtitle,
+        "is_internal": is_internal,
         "session_id": payload.get("session_id"),
         "turn_id": payload.get("turn_id"),
         "transcript_path": payload.get("transcript_path"),

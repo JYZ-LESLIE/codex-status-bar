@@ -17,7 +17,11 @@ private struct CodexStatusEvent: Decodable {
     let taskLabel: String?
     let taskColor: String?
     let statusColor: String?
+    let displayTitle: String?
+    let displaySubtitle: String?
+    let isInternal: Bool?
     let sessionID: String?
+    let transcriptPath: String?
     let workspace: String?
     let project: String?
     let title: String?
@@ -39,7 +43,11 @@ private struct CodexStatusEvent: Decodable {
         case taskLabel = "task_label"
         case taskColor = "task_color"
         case statusColor = "status_color"
+        case displayTitle = "display_title"
+        case displaySubtitle = "display_subtitle"
+        case isInternal = "is_internal"
         case sessionID = "session_id"
+        case transcriptPath = "transcript_path"
         case workspace
         case project
         case title
@@ -63,7 +71,11 @@ private struct CodexSessionSummary: Decodable {
     let taskLabel: String?
     let taskColor: String?
     let statusColor: String?
+    let displayTitle: String?
+    let displaySubtitle: String?
+    let isInternal: Bool?
     let sessionID: String?
+    let transcriptPath: String?
     let workspace: String?
     let project: String?
     let title: String?
@@ -85,7 +97,11 @@ private struct CodexSessionSummary: Decodable {
         case taskLabel = "task_label"
         case taskColor = "task_color"
         case statusColor = "status_color"
+        case displayTitle = "display_title"
+        case displaySubtitle = "display_subtitle"
+        case isInternal = "is_internal"
         case sessionID = "session_id"
+        case transcriptPath = "transcript_path"
         case workspace
         case project
         case title
@@ -220,8 +236,8 @@ private final class IslandContentView: NSView {
         level = StatusLevel(event: event)
         badgeLabel.stringValue = level.label
         let task = event?.taskLabel ?? level.label
-        titleLabel.stringValue = event?.title ?? "Codex 空闲"
-        bodyLabel.stringValue = "\(task) · \(event?.body ?? "等待 Codex 事件")"
+        titleLabel.stringValue = event?.displayTitle ?? event?.title ?? "Codex 空闲"
+        bodyLabel.stringValue = "\(task) · \(event?.displaySubtitle ?? event?.body ?? "等待 Codex 事件")"
         needsDisplay = true
     }
 
@@ -296,6 +312,76 @@ private final class IslandWindowController {
     }
 }
 
+private final class SessionCardView: NSView {
+    private let color: NSColor
+    private let sessionID: String?
+    private let statusSymbol: String
+    private let titleText: String
+    private let subtitleText: String
+
+    init(title: String, subtitle: String, statusSymbol: String, color: NSColor, sessionID: String?) {
+        self.titleText = title
+        self.subtitleText = subtitle
+        self.statusSymbol = statusSymbol
+        self.color = color
+        self.sessionID = sessionID
+        super.init(frame: NSRect(x: 0, y: 0, width: 540, height: 78))
+        wantsLayer = true
+        toolTip = sessionID?.isEmpty == false ? "点击打开这个 Codex 线程" : nil
+        buildLabels()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func buildLabels() {
+        let titleLabel = NSTextField(labelWithString: titleText)
+        titleLabel.frame = NSRect(x: 52, y: 41, width: 410, height: 24)
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(titleLabel)
+
+        let subtitleLabel = NSTextField(labelWithString: subtitleText)
+        subtitleLabel.frame = NSRect(x: 52, y: 15, width: 410, height: 22)
+        subtitleLabel.font = .systemFont(ofSize: 13, weight: .regular)
+        subtitleLabel.textColor = .secondaryLabelColor
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(subtitleLabel)
+
+        let statusLabel = NSTextField(labelWithString: statusSymbol)
+        statusLabel.frame = NSRect(x: 486, y: 39, width: 30, height: 26)
+        statusLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        statusLabel.alignment = .center
+        statusLabel.textColor = color
+        addSubview(statusLabel)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let card = bounds.insetBy(dx: 10, dy: 6)
+        let path = NSBezierPath(roundedRect: card, xRadius: 18, yRadius: 18)
+        NSColor.controlBackgroundColor.withAlphaComponent(0.92).setFill()
+        path.fill()
+        NSColor.separatorColor.withAlphaComponent(0.65).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 26, y: 48, width: 12, height: 12)).fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let sessionID, !sessionID.isEmpty,
+              let url = URL(string: "codex://threads/\(sessionID)") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+}
+
 private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let latestURL = FileManager.default.homeDirectoryForCurrentUser
@@ -310,6 +396,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     private var latestEventID: String?
     private var hasLoadedInitialEvent = false
     private let launchTime = Date().timeIntervalSince1970
+    private var threadTitleCache: [String: String] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -325,27 +412,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
     private func configureMenu(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) {
         let menu = NSMenu()
-        let title = event?.title ?? "Codex 空闲"
-        let workspace = event?.project ?? event?.workspace ?? "等待 Codex 事件"
-        let progress = event?.progress ?? event?.body ?? "新的 Codex 动态会显示在这里。"
 
         if let button = statusItem.button {
             button.attributedTitle = statusBarTitle(event: event, sessions: sessions)
             button.toolTip = tooltipTitle(event: event, sessions: sessions)
         }
 
-        let headline = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        headline.image = dotImage(color: colorFor(event: event))
+        let headline = NSMenuItem(title: "Codex 任务看板", action: nil, keyEquivalent: "")
         headline.isEnabled = false
         menu.addItem(headline)
-
-        let workspaceItem = NSMenuItem(title: workspace, action: nil, keyEquivalent: "")
-        workspaceItem.isEnabled = false
-        menu.addItem(workspaceItem)
-
-        let progressItem = NSMenuItem(title: "进度：\(menuSafe(progress, limit: 72))", action: nil, keyEquivalent: "")
-        progressItem.isEnabled = false
-        menu.addItem(progressItem)
 
         menu.addItem(.separator())
         addSessionSection(
@@ -414,18 +489,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         header.isEnabled = false
         menu.addItem(header)
         for session in sessions.prefix(6) {
-            let level = StatusLevel(session: session)
-            let project = session.project ?? session.workspace ?? "Workspace"
-            let text = session.progress ?? session.body ?? session.title ?? "等待事件"
-            let task = taskLabel(for: session)
-            let item = NSMenuItem(
-                title: "\(level.label) | \(task) | \(menuSafe(project, limit: 22)) | \(menuSafe(text, limit: 42))",
-                action: session.sessionID?.isEmpty == false ? #selector(openCurrentThread) : nil,
-                keyEquivalent: ""
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            item.view = SessionCardView(
+                title: displayTitle(for: session),
+                subtitle: displaySubtitle(for: session),
+                statusSymbol: statusSymbol(for: session),
+                color: colorFor(session: session),
+                sessionID: session.sessionID
             )
-            item.image = dotImage(color: colorFor(session: session))
-            item.representedObject = session.sessionID
-            item.isEnabled = session.sessionID?.isEmpty == false
             menu.addItem(item)
         }
     }
@@ -473,22 +544,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
     private func sessionStatusTitle(_ session: CodexSessionSummary) -> String {
         let level = StatusLevel(session: session)
-        let project = session.project ?? session.workspace ?? ""
-        let task = taskLabel(for: session)
-        guard !project.isEmpty else {
-            return "\(level.menuTitle) · \(task)"
-        }
-        return "\(level.menuTitle) · \(task) · \(menuSafe(project, limit: 16))"
+        return "\(level.menuTitle) · \(menuSafe(displayTitle(for: session), limit: 18))"
     }
 
     private func tooltipTitle(event: CodexStatusEvent?, sessions: [CodexSessionSummary]) -> String {
         if let top = topSessionForStatus(sessions) {
-            let title = top.title ?? sessionStatusTitle(top)
-            let text = top.progress ?? top.body ?? "等待事件"
+            let title = displayTitle(for: top)
+            let text = displaySubtitle(for: top)
             return "\(title)\n\(text)"
         }
-        let title = event?.title ?? "Codex 空闲"
-        let text = event?.progress ?? event?.body ?? "新的 Codex 动态会显示在这里。"
+        let title = event?.displayTitle ?? event?.title ?? "Codex 空闲"
+        let text = event?.displaySubtitle ?? event?.progress ?? event?.body ?? "新的 Codex 动态会显示在这里。"
         return "\(title)\n\(text)"
     }
 
@@ -540,7 +606,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
               let sessions = try? JSONDecoder().decode([String: CodexSessionSummary].self, from: data) else {
             return []
         }
-        return sessions.values.sorted {
+        return sessions.values.filter { !isInternalSession($0) }.sorted {
             let leftPriority = $0.priority ?? priorityFallback(for: $0)
             let rightPriority = $1.priority ?? priorityFallback(for: $1)
             if leftPriority != rightPriority {
@@ -548,6 +614,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
             }
             return ($0.timestamp ?? 0) > ($1.timestamp ?? 0)
         }
+    }
+
+    private func isInternalSession(_ session: CodexSessionSummary) -> Bool {
+        if session.isInternal == true {
+            return true
+        }
+        let project = (session.project ?? session.workspace ?? "").lowercased()
+        if project == "screen_recording" {
+            return true
+        }
+        let text = cleanDisplay(session.displaySubtitle ?? session.progress ?? session.body ?? "")
+        return text.lowercased().hasPrefix("memory summary") || text.lowercased().hasPrefix("context of everything")
     }
 
     private func priorityFallback(for session: CodexSessionSummary) -> Int {
@@ -581,6 +659,93 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         case .running: return "处理"
         case .idle: return "空闲"
         }
+    }
+
+    private func displayTitle(for session: CodexSessionSummary) -> String {
+        if let title = cleanOptional(session.displayTitle), title != "后台摘要" {
+            return menuSafe(title, limit: 34)
+        }
+        if let path = session.transcriptPath,
+           let title = threadTitle(from: path) {
+            return menuSafe(title, limit: 34)
+        }
+        if let title = cleanOptional(session.title),
+           !title.hasPrefix("Codex 已完成"),
+           !title.hasPrefix("Codex 运行中"),
+           !title.hasPrefix("Codex 需要你") {
+            return menuSafe(title, limit: 34)
+        }
+        if let project = cleanOptional(session.project ?? session.workspace),
+           !["codex", "workspace", "screen_recording"].contains(project.lowercased()) {
+            return menuSafe(project, limit: 34)
+        }
+        return menuSafe(cleanDisplay(session.progress ?? session.body ?? "Codex 任务"), limit: 34)
+    }
+
+    private func displaySubtitle(for session: CodexSessionSummary) -> String {
+        if let subtitle = cleanOptional(session.displaySubtitle) {
+            return menuSafe(subtitle, limit: 64)
+        }
+        let text = cleanDisplay(session.progress ?? session.body ?? session.title ?? "等待更新")
+        return menuSafe(text, limit: 64)
+    }
+
+    private func statusSymbol(for session: CodexSessionSummary) -> String {
+        if session.requiresUser == true {
+            return "!"
+        }
+        switch StatusLevel(session: session) {
+        case .done: return "✓"
+        case .running: return "○"
+        case .needsFeedback: return "!"
+        case .idle: return "·"
+        }
+    }
+
+    private func cleanOptional(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let cleaned = cleanDisplay(value)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private func cleanDisplay(_ value: String) -> String {
+        var text = value.replacingOccurrences(of: "\n", with: " ")
+        while text.hasPrefix("#") {
+            text.removeFirst()
+        }
+        text = text.replacingOccurrences(of: "`", with: "")
+        text = text.replacingOccurrences(of: "*", with: "")
+        return text.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func threadTitle(from transcriptPath: String) -> String? {
+        if let cached = threadTitleCache[transcriptPath] {
+            return cached
+        }
+        guard let handle = FileHandle(forReadingAtPath: transcriptPath) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: 256_000)
+        guard let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        for line in text.split(separator: "\n").prefix(260) {
+            guard let data = line.data(using: .utf8),
+                  let item = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let payload = item["payload"] as? [String: Any] else {
+                continue
+            }
+            if payload["type"] as? String == "thread_name_updated",
+               let title = payload["thread_name"] as? String {
+                let cleaned = cleanDisplay(title)
+                threadTitleCache[transcriptPath] = cleaned
+                return cleaned
+            }
+        }
+        return nil
     }
 
     private func colorFor(event: CodexStatusEvent?) -> NSColor {
