@@ -427,12 +427,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
         configureMenu(event: nil, sessions: [])
         refresh()
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(activeApplicationChanged(_:)),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil
-        )
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
@@ -464,6 +458,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         addSessionSection(
             title: "最近完成",
             sessions: sessions.filter { StatusLevel(session: $0) == .done },
+            emptyTitle: "暂无阶段完成",
             to: menu
         )
         if sessions.isEmpty {
@@ -513,8 +508,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         menu.setSubmenu(submenu, for: legendItem)
     }
 
-    private func addSessionSection(title: String, sessions: [CodexSessionSummary], to menu: NSMenu) {
+    private func addSessionSection(
+        title: String,
+        sessions: [CodexSessionSummary],
+        emptyTitle: String? = nil,
+        to menu: NSMenu
+    ) {
         guard !sessions.isEmpty else {
+            if let emptyTitle {
+                let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+                let emptyItem = NSMenuItem(title: emptyTitle, action: nil, keyEquivalent: "")
+                emptyItem.isEnabled = false
+                menu.addItem(emptyItem)
+            }
             return
         }
         let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -735,40 +743,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         } catch {
             return
         }
-    }
-
-    @objc private func activeApplicationChanged(_ notification: Notification) {
-        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              isCodexApplication(app) else {
-            return
-        }
-        markCompletedSessionsRead()
-    }
-
-    private func isCodexApplication(_ app: NSRunningApplication) -> Bool {
-        let bundleID = (app.bundleIdentifier ?? "").lowercased()
-        let name = (app.localizedName ?? "").lowercased()
-        if bundleID == "com.jiyuanzheng.codex-status-bar" || name == "codex status bar" {
-            return false
-        }
-        return name == "codex" || (name.contains("codex") && !name.contains("status bar"))
-    }
-
-    private func markCompletedSessionsRead() {
-        guard let data = try? Data(contentsOf: sessionsURL),
-              let sessions = try? JSONDecoder().decode([String: CodexSessionSummary].self, from: data) else {
-            return
-        }
-        let keys = sessions.values.filter {
-            StatusLevel(session: $0) == .done
-                && ($0.showInBoard ?? true) != false
-                && !isInternalSession($0)
-        }.compactMap { dismissKey(for: $0) }
-        guard !keys.isEmpty else {
-            return
-        }
-        recordDismissed(keys)
-        refresh()
     }
 
     private func isInternalSession(_ session: CodexSessionSummary) -> Bool {
