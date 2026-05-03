@@ -1,21 +1,23 @@
-# Codex Status Bar
+# Codex Status Bar / Codex 状态栏
 
-Codex Status Bar is a tiny macOS menu bar and top-island notifier for Codex. It is built for people who move between a MacBook notch display and external monitors.
+Codex Status Bar 是一个给 Codex 用的 macOS 菜单栏 + 顶部岛状提醒工具，默认中文运行。它适合在 MacBook 刘海屏和外接显示器之间切换的人。
 
-It listens to Codex hook events, writes a local event log, shows the latest Codex state in the menu bar, displays a top-center island, and sends macOS notifications when a prompt is submitted, a turn completes, or Codex needs feedback.
+它监听 Codex hook 事件，写入本地事件日志，在菜单栏显示最新状态，在屏幕顶部显示岛状提示，并在“收到指令 / 已完成 / 需要反馈”时发送 macOS 通知。
+
+English: this is a small Chinese-first macOS menu bar and top-island notifier for Codex.
 
 ## Why this exists
 
-Vibe Island and Open Island showed that AI coding agents need a lightweight ambient control surface. In my own workflow, the missing case was external-monitor work: the notch is often not visible, and full historical session scanning can be expensive when Codex has very large rollout files.
+Vibe Island 和 Open Island 证明了 AI coding agent 需要一个轻量的环境状态提示层。但在我的实际工作里，经常使用外接显示器，刘海不一定可见；同时 Codex 历史文件很大时，全量扫描历史 rollout 成本很高。
 
 This project focuses on that narrower problem:
 
-- menu bar first, so it works on external displays
-- top-island overlay on the active screen, including MacBook notch displays
-- obvious `DONE` and `NEEDS FEEDBACK` markers
-- notifications for prompt, completion, and feedback-needed events
-- no historical rollout scan
-- fail-open hook behavior, so Codex keeps working if the status app is not running
+- 菜单栏优先，所以外接显示器也能看到
+- 当前屏幕顶部显示岛状浮层，兼容 MacBook 刘海屏
+- 明确显示 `运行中`、`已完成`、`需要反馈`
+- 收到指令、完成、需要反馈时发通知
+- 不扫描历史 rollout 文件
+- hook fail-open，状态栏没运行也不会阻塞 Codex
 
 ## Install
 
@@ -23,7 +25,7 @@ This project focuses on that narrower problem:
 ./install.sh
 ```
 
-The installer builds a small native macOS app, installs the hook sink, updates `~/.codex/hooks.json`, and adds a LaunchAgent so the app starts at login.
+安装器会构建一个原生 macOS 小 app，安装 hook sink，更新 `~/.codex/hooks.json`，并添加 LaunchAgent，让它登录后自动启动。
 
 ## Uninstall
 
@@ -31,18 +33,18 @@ The installer builds a small native macOS app, installs the hook sink, updates `
 ./uninstall.sh
 ```
 
-The event history is preserved under `~/Library/Application Support/CodexStatusBar/`.
+事件历史会保留在 `~/Library/Application Support/CodexStatusBar/`。
 
 ## What changed versus the inspiration
 
-This is not a clone of Vibe Island or Open Island. It borrows the product insight that coding agents need ambient status, but changes the implementation surface:
+这不是 Vibe Island 或 Open Island 的克隆。它借鉴的是“coding agent 需要环境状态提示”的产品洞察，但实现面做了这些调整：
 
-- combines a menu bar item with a lightweight top island
-- works on both MacBook notch displays and external monitors
-- keeps the event source to current Codex hooks only
-- avoids scanning `~/.codex/sessions/**/rollout-*.jsonl`
-- adds a simple local JSONL event log
-- keeps the hook sink independent of the running app
+- 菜单栏 + 轻量顶部岛状浮层
+- 同时支持 MacBook 刘海屏和外接显示器
+- 只接当前 Codex hook 事件
+- 避免扫描 `~/.codex/sessions/**/rollout-*.jsonl`
+- 增加本地 JSONL 事件日志
+- hook sink 独立于 app 运行，app 没开也不阻塞 Codex
 
 ## Open source thanks
 

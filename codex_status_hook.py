@@ -39,22 +39,22 @@ def _summary(payload: dict) -> tuple[str, str]:
     tool = payload.get("tool_name")
 
     if event == "SessionStart":
-        return "Codex running", f"Started in {workspace}"
+        return "Codex 运行中", f"已在 {workspace} 启动"
     if event in {"Notification", "PermissionRequest"}:
-        text = str(prompt or assistant or "Codex needs your attention").strip()
-        return "Codex needs feedback", text[:160]
+        text = str(prompt or assistant or "Codex 需要你处理").strip()
+        return "Codex 需要反馈", text[:160]
     if event == "UserPromptSubmit":
-        text = str(prompt or "New prompt received").strip()
-        return "Codex prompt", text[:160]
+        text = str(prompt or "已收到新指令").strip()
+        return "Codex 收到指令", text[:160]
     if event == "Stop":
-        text = str(assistant or "Turn completed").strip()
-        return "Codex done", text[:160]
+        text = str(assistant or "本轮已完成").strip()
+        return "Codex 已完成", text[:160]
     if event == "PreToolUse":
-        return "Codex working", f"Using {tool or 'tool'} in {workspace}"
+        return "Codex 执行中", f"正在 {workspace} 使用 {tool or '工具'}"
     if event == "PostToolUse":
-        return "Codex updated", f"Finished {tool or 'tool'} in {workspace}"
+        return "Codex 已更新", f"已在 {workspace} 完成 {tool or '工具'}"
 
-    return "Codex event", f"{event} in {workspace}"
+    return "Codex 事件", f"{workspace} 中的 {event}"
 
 
 def _write_event(payload: dict) -> None:

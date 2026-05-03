@@ -54,19 +54,19 @@ private enum StatusLevel {
 
     var label: String {
         switch self {
-        case .idle: return "IDLE"
-        case .running: return "RUNNING"
-        case .done: return "DONE"
-        case .needsFeedback: return "NEEDS FEEDBACK"
+        case .idle: return "空闲"
+        case .running: return "运行中"
+        case .done: return "已完成"
+        case .needsFeedback: return "需要反馈"
         }
     }
 
     var menuTitle: String {
         switch self {
         case .idle: return "Codex -"
-        case .running: return "Codex RUN"
-        case .done: return "Codex DONE"
-        case .needsFeedback: return "Codex NEEDS YOU"
+        case .running: return "Codex 运行中"
+        case .done: return "Codex 已完成"
+        case .needsFeedback: return "Codex 需要你"
         }
     }
 
@@ -98,9 +98,9 @@ private enum StatusLevel {
 }
 
 private final class IslandContentView: NSView {
-    private let badgeLabel = NSTextField(labelWithString: "IDLE")
-    private let titleLabel = NSTextField(labelWithString: "Codex idle")
-    private let bodyLabel = NSTextField(labelWithString: "Waiting for events")
+    private let badgeLabel = NSTextField(labelWithString: "空闲")
+    private let titleLabel = NSTextField(labelWithString: "Codex 空闲")
+    private let bodyLabel = NSTextField(labelWithString: "等待 Codex 事件")
     private var level: StatusLevel = .idle
 
     override init(frame frameRect: NSRect) {
@@ -114,7 +114,7 @@ private final class IslandContentView: NSView {
             addSubview(label)
         }
 
-        badgeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        badgeLabel.font = .systemFont(ofSize: 13, weight: .bold)
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         bodyLabel.font = .systemFont(ofSize: 12, weight: .regular)
         bodyLabel.textColor = NSColor(white: 1.0, alpha: 0.78)
@@ -122,7 +122,7 @@ private final class IslandContentView: NSView {
         NSLayoutConstraint.activate([
             badgeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
             badgeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            badgeLabel.widthAnchor.constraint(equalToConstant: 116),
+        badgeLabel.widthAnchor.constraint(equalToConstant: 88),
 
             titleLabel.leadingAnchor.constraint(equalTo: badgeLabel.trailingAnchor, constant: 10),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
@@ -141,8 +141,8 @@ private final class IslandContentView: NSView {
     func update(event: CodexStatusEvent?) {
         level = StatusLevel(event: event)
         badgeLabel.stringValue = level.label
-        titleLabel.stringValue = event?.title ?? "Codex idle"
-        bodyLabel.stringValue = event?.body ?? "Waiting for events"
+        titleLabel.stringValue = event?.title ?? "Codex 空闲"
+        bodyLabel.stringValue = event?.body ?? "等待 Codex 事件"
         needsDisplay = true
     }
 
@@ -164,7 +164,7 @@ private final class IslandWindowController {
     private var hideWorkItem: DispatchWorkItem?
 
     init() {
-        contentView = IslandContentView(frame: NSRect(x: 0, y: 0, width: 520, height: 58))
+        contentView = IslandContentView(frame: NSRect(x: 0, y: 0, width: 540, height: 58))
         panel = NSPanel(
             contentRect: contentView.bounds,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -202,7 +202,7 @@ private final class IslandWindowController {
 
         let screenFrame = screen.frame
         let visibleFrame = screen.visibleFrame
-        let width = min(540, max(420, visibleFrame.width * 0.34))
+        let width = min(560, max(440, visibleFrame.width * 0.36))
         let height: CGFloat = 58
         let topInset: CGFloat
         if #available(macOS 12.0, *) {
@@ -243,9 +243,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
 
     private func configureMenu(event: CodexStatusEvent?) {
         let menu = NSMenu()
-        let title = event?.title ?? "Codex idle"
-        let workspace = event?.workspace ?? "Waiting for events"
-        let body = event?.body ?? "New Codex activity will appear here."
+        let title = event?.title ?? "Codex 空闲"
+        let workspace = event?.workspace ?? "等待 Codex 事件"
+        let body = event?.body ?? "新的 Codex 动态会显示在这里。"
 
         if let button = statusItem.button {
             button.title = shortStatusTitle(for: event)
@@ -265,15 +265,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         menu.addItem(bodyItem)
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o"))
-        menu.addItem(NSMenuItem(title: "Open Event Log", action: #selector(openEventLog), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: "打开 Codex", action: #selector(openCodex), keyEquivalent: "o"))
+        menu.addItem(NSMenuItem(title: "打开事件日志", action: #selector(openEventLog), keyEquivalent: "l"))
         if let sessionID = event?.sessionID, !sessionID.isEmpty {
-            let item = NSMenuItem(title: "Open Current Thread", action: #selector(openCurrentThread), keyEquivalent: "t")
+            let item = NSMenuItem(title: "打开当前线程", action: #selector(openCurrentThread), keyEquivalent: "t")
             item.representedObject = sessionID
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Codex Status", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "退出 Codex 状态栏", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
@@ -312,7 +312,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     private func notify(_ event: CodexStatusEvent) {
         let content = UNMutableNotificationContent()
         content.title = event.title ?? "Codex"
-        content.body = event.body ?? "Codex updated."
+        content.body = event.body ?? "Codex 状态已更新。"
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: event.eventID,
